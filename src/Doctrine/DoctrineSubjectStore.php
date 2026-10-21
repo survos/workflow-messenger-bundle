@@ -40,13 +40,16 @@ final readonly class DoctrineSubjectStore implements BatchSubjectStoreInterface
     public function load(SubjectReference $reference): ?object
     {
         $em = $this->manager($reference->type);
-        $subject = $em->find($reference->type, $reference->id);
-        if (null !== $subject) {
-            // A long-running worker may hold a stale identity-map copy.
-            $em->refresh($subject);
+        // A long-running worker may hold a stale identity-map copy. Drop it and hydrate a fresh instance
+        // rather than refresh()ing it: refreshing an initialised entity re-assigns every property, which
+        // throws for a readonly mapped property whose value is an object (a new DateTimeImmutable is never
+        // identical to the old one), as BaseMedia::$createdAt is.
+        $managed = $em->getUnitOfWork()->tryGetById($reference->id, $em->getClassMetadata($reference->type)->rootEntityName);
+        if (false !== $managed) {
+            $em->detach($managed);
         }
 
-        return $subject;
+        return $em->find($reference->type, $reference->id);
     }
 
     public function save(SubjectReference $reference, object $subject, array $context = []): void
