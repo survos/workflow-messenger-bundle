@@ -40,16 +40,23 @@ final readonly class DoctrineSubjectStore implements BatchSubjectStoreInterface
     public function load(SubjectReference $reference): ?object
     {
         $em = $this->manager($reference->type);
-        // A long-running worker may hold a stale identity-map copy. Drop it and hydrate a fresh instance
-        // rather than refresh()ing it: refreshing an initialised entity re-assigns every property, which
-        // throws for a readonly mapped property whose value is an object (a new DateTimeImmutable is never
-        // identical to the old one), as BaseMedia::$createdAt is.
-        $managed = $em->getUnitOfWork()->tryGetById($reference->id, $em->getClassMetadata($reference->type)->rootEntityName);
-        if (false !== $managed) {
-            $em->detach($managed);
+        $rootClass = $em->getClassMetadata($reference->type)->rootEntityName;
+        $wasManaged = false !== $em->getUnitOfWork()->tryGetById($reference->id, $rootClass);
+        $subject = $em->find($reference->type, $reference->id);
+        if (null !== $subject && $wasManaged) {
+            // A long-running worker may hold a stale identity-map copy, so refresh it. Never detach it:
+            // other code in this process (a registry updater with a pending Artifact, say) may already
+            // reference this very instance. Doctrine ORM 3.7 refuses to re-assign a readonly mapped
+            // property holding an object (BaseMedia::$createdAt), so a refresh that hits one keeps the
+            // managed instance, whose other fields were refreshed first. A freshly loaded entity needs
+            // no refresh at all.
+            try {
+                $em->refresh($subject);
+            } catch (\LogicException) {
+            }
         }
 
-        return $em->find($reference->type, $reference->id);
+        return $subject;
     }
 
     public function save(SubjectReference $reference, object $subject, array $context = []): void
