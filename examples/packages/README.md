@@ -99,3 +99,9 @@ then harvest (private, heavier usage). No existing application is changed here.
 `composer.lock` records the actual 8.2 development source references tested. The
 bundle manifests constrain the 8.2 development line; they do not embed a temporary
 PR patch. The tests and offline example make no live HTTP requests.
+
+## Multi-place image example
+
+Run `php image.php` for the offline download/thumbnail/description/join example.
+See [the workflow walkthrough](IMAGE_WORKFLOW.md) and
+[Harvest/Mediary candidate review](WORKFLOW_CANDIDATES.md).
