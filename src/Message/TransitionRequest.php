@@ -7,6 +7,11 @@ namespace Survos\WorkflowMessengerBundle\Message;
 /** Versioned data only; never put entities or events in a queue. */
 final readonly class TransitionRequest
 {
+    /**
+     * Nested arrays contain only scalars, null, or further arrays; validateContext enforces this recursively.
+     *
+     * @param array<array-key, scalar|array<array-key, mixed>|null> $context
+     */
     public function __construct(
         public string $workflow,
         public SubjectReference $subject,
@@ -21,6 +26,7 @@ final readonly class TransitionRequest
         self::validateContext($context);
     }
 
+    /** @param array<array-key, scalar|array<array-key, mixed>|null> $context */
     private static function validateContext(array $context): void
     {
         // Also detects recursive arrays and non-finite floats before traversing.

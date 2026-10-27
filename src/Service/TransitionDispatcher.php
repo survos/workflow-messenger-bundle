@@ -16,6 +16,7 @@ final readonly class TransitionDispatcher
     {
     }
 
+    /** @param array<array-key, scalar|array<array-key, mixed>|null> $context Plain data, recursively validated by TransitionRequest. */
     public function dispatch(string $workflow, SubjectReference $subject, string $transition, array $context = []): Envelope
     {
         $transport = $this->router->transport($this->workflows->get($workflow), $transition, ($context['cascade'] ?? null) === 'sync');
