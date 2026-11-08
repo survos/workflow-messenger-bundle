@@ -123,7 +123,18 @@ final class TransitionHandler implements \Symfony\Component\Messenger\Handler\Ba
             throw new UnrecoverableMessageHandlingException($e->getMessage(), previous: $e);
         }
 
-        return $this->withLocks([$request->subject], fn () => $this->handle($request, $workflow));
+        return $this->withLocks([$request->subject], function () use ($request, $workflow): TransitionResult {
+            try {
+                return $this->handle($request, $workflow);
+            } catch (\Throwable $error) {
+                // completed listeners run after the in-memory marking changes. A failed
+                // continuation must not leave those changes for the next message to flush.
+                if ($this->store instanceof \Survos\WorkflowMessengerBundle\Contract\BatchSubjectStoreInterface) {
+                    $this->store->discardBatch([$request->subject]);
+                }
+                throw $error;
+            }
+        });
     }
 
     /** Acquire before loading; batch and single work share the same re-entrant lock scope. */
@@ -189,7 +200,9 @@ final class TransitionHandler implements \Symfony\Component\Messenger\Handler\Ba
             }
             if (null === $previous) {
                 $reasons = [];
-                foreach ($workflow->buildTransitionBlockerList($subject, $request->transition) as $blocker) {
+                $blockers = $workflow->buildTransitionBlockerList($subject, $request->transition);
+                $this->resumeAfterCommittedTransition($request, $workflow, $subject, $blockers);
+                foreach ($blockers as $blocker) {
                     $reasons[] = $blocker->getMessage();
                 }
                 foreach ($duplicates as [$duplicate, $ack]) {
@@ -251,6 +264,9 @@ final class TransitionHandler implements \Symfony\Component\Messenger\Handler\Ba
                     $ack->ack(new TransitionResult($duplicate->requestId, 'applied'));
                 }
             } catch (\Throwable $error) {
+                if ($this->store instanceof \Survos\WorkflowMessengerBundle\Contract\BatchSubjectStoreInterface) {
+                    $this->store->discardBatch([$request->subject]);
+                }
                 foreach ($grouped[$id] as [, $ack]) {
                     if (!$ack->isAcknowledged()) {
                         $ack->nack($error);
@@ -277,6 +293,7 @@ final class TransitionHandler implements \Symfony\Component\Messenger\Handler\Ba
         try {
             $workflow->apply($subject, $request->transition, array_replace($request->context, ['workflow_extras.defer' => true]));
         } catch (NotEnabledTransitionException $e) {
+            $this->resumeAfterCommittedTransition($request, $workflow, $subject, $e->getTransitionBlockerList());
             $reasons = [];
             foreach ($e->getTransitionBlockerList() as $blocker) {
                 $reasons[] = $blocker->getMessage();
@@ -289,5 +306,15 @@ final class TransitionHandler implements \Symfony\Component\Messenger\Handler\Ba
         $this->next?->continue($workflow, $subject, $request->context, $previous);
 
         return new TransitionResult($request->requestId, 'applied');
+    }
+
+    private function resumeAfterCommittedTransition(TransitionRequest $request, \Symfony\Component\Workflow\WorkflowInterface $workflow, object $subject, \Symfony\Component\Workflow\TransitionBlockerList $blockers): void
+    {
+        // A previous attempt may have saved the transition before its continuation
+        // failed. Resume from the durable current places, not the obsolete transition.
+        // Guard failures must still block work without advancing another branch.
+        if ($blockers->has(\Symfony\Component\Workflow\TransitionBlocker::BLOCKED_BY_MARKING)) {
+            $this->next?->continue($workflow, $subject, $request->context);
+        }
     }
 }

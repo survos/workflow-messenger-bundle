@@ -189,8 +189,12 @@ run in that worker. Calling native `apply()` yourself remains synchronous even
 if async metadata is present; this bundle never intercepts it.
 
 Handler results report `applied` or `blocked` (including blocker messages). They are available through Messenger's `HandledStamp`, including to
-worker event subscribers. Blocked requests are acknowledged rather
-than retried. Missing subjects and configuration errors are unrecoverable failures; listener, network and
+worker event subscribers. Requests blocked by a changed marking first resume automatic
+`next` work from the current places: a previous attempt may have persisted its
+transition before its continuation failed. The original transition is not reapplied.
+If continuation fails again, the request is retried; otherwise it is acknowledged
+as `blocked`. Guard-blocked requests do not resume other work. `cascade: none`
+still disables continuation. Missing subjects and configuration errors are unrecoverable failures; listener, network and
 persistence failures propagate to Messenger's configured failure handling.
 The scaffold does not yet supply a metrics/logging subscriber.
 
@@ -200,10 +204,12 @@ The scaffold does not yet supply a metrics/logging subscriber.
   exactly-once execution. External side effects must be idempotent.
 - Guards run in the worker against current state. A stale request can be blocked;
   a self-transition may still be enabled on redelivery.
-- The adapter owns persistence. This scaffold does not provide a Doctrine adapter,
-  transaction middleware, locks or an outbox. Concurrent consumers of one subject
-  need an application-level concurrency strategy. Retried work needs a fresh
-  persistence context, particularly after an ORM failure.
+- The Doctrine adapter flushes under the handler's per-subject lock. On failed
+  single or batched work, stores implementing `BatchSubjectStoreInterface` discard
+  unsaved changes before another message can flush them. This also covers a
+  `completed` listener that throws after changing the in-memory marking.
+  Custom stores own equivalent failure cleanup. No transactional outbox is provided;
+  a process crash between saving and dispatching still requires reconciliation.
 - A database flush is not necessarily a commit. Queuing inside an open producer
   transaction can let a worker run before it sees the subject.
 - Context permits only arrays, scalars and null, not entities, closures or events.
