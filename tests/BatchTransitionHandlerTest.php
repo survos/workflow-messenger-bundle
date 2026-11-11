@@ -235,6 +235,18 @@ final class BatchTransitionHandlerTest extends TestCase
         self::assertSame(['1', '2'], $store->continued);
     }
 
+    public function testTheRequestIdIsTheMessageIdOfTheDispatchedEnvelope(): void
+    {
+        [$handler, , , , $bus] = $this->fixture(2);
+        $dispatcher = (new \ReflectionProperty($handler, 'dispatcher'))->getValue($handler);
+
+        $envelope = $dispatcher->dispatch('media', new SubjectReference('item', '1'), 'dispatch');
+
+        $requestId = $envelope->getMessage()->requestId;
+        self::assertSame($requestId, $envelope->last(\Symfony\Component\Messenger\Stamp\MessageIdStamp::class)?->getId());
+        self::assertSame($envelope, $bus->messages[0]);
+    }
+
     private function request(string $id, string $requestId = 'request'): TransitionRequest
     {
         return new TransitionRequest('media', new SubjectReference('item', $id), 'dispatch', requestId: $requestId);
